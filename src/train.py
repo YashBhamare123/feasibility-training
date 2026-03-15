@@ -19,7 +19,7 @@ from src.hellaswag_eval import render_example, iterate_examples, get_most_likely
 # torch.set_float32_matmul_precision('high')    # enable TF32 precision
 
 # set torch compile to True (if it doesn't throws any error) to speed up training
-use_torch_compile = False
+use_torch_compile =True
 
 
 class Trainer:
@@ -268,22 +268,22 @@ class Trainer:
 
 @dataclass
 class GPTConfig:
-    context_length: int = 1024    # max context / sequence length
+    context_length: int = 256# max context / sequence length
     vocab_size: int = 50257    # number of tokens: 50000 BPE merges + 256 bytes tokens + 1 <endoftext> token
-    num_layers: int = 12
-    embd_size: int = 768    # embedding dim
-    num_heads: int = 12
+    num_layers: int = 4
+    embd_size: int = 512 # embedding dim
+    num_heads: int = 4
 
 
 def get_args():
     import argparse
     parser = argparse.ArgumentParser(description="Hyperparameter Configuration")
     parser.add_argument("--total_batch_size", type=int, default=524288, help="number of tokens processed for each weight update")    # =2^19 tokens/step update, (~0.5M tokens used in openai gpt3 paper)
-    parser.add_argument("--mini_batch_size", type=int, default=32, help="setting of mini_batch_size is just a performance optimization. bigger gpu, bigger mini_batch_size")
-    parser.add_argument("--context_length", type=int, default=512)    # max sequence length (can also try 2048)
-    parser.add_argument("--num_layers", type=int, default=3)
+    parser.add_argument("--mini_batch_size", type=int, default=128, help="setting of mini_batch_size is just a performance optimization. bigger gpu, bigger mini_batch_size")
+    parser.add_argument("--context_length", type=int, default=256)    # max sequence length (can also try 2048)
+    parser.add_argument("--num_layers", type=int, default=4)
     parser.add_argument("--embd_size", type=int, default=256)
-    parser.add_argument("--num_heads", type=int, default=8)
+    parser.add_argument("--num_heads", type=int, default=4)
     parser.add_argument("--max_lr", type=float, default=1e-3)
     parser.add_argument("--min_lr", type=float, default=1e-3 * 0.1)
     parser.add_argument("--warmup_steps", type=int, default=100)
@@ -291,7 +291,7 @@ def get_args():
     parser.add_argument("--num_epochs", type=int, default=5)
     parser.add_argument("--steps_per_epoch", type=int, default=200)    # 100M tokens / 0.5M total batch size ~ 200 for 1 epoch
     parser.add_argument("--eval_freq", type=int, default=50)
-    # parser.add_argument("--use_torch_compile", action='store_true')    # default False
+    parser.add_argument("--use_torch_compile", action='store_true')    # default False
     parser.add_argument("--seed", type=int, default=1337, help="Random seed for reproducibility")
     parser.add_argument("--logdir", type=str, default="./logs/")
     return parser.parse_args()
