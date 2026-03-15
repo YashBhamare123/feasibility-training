@@ -15,7 +15,8 @@ from .model import GPT
 from .dataloader import DataLoaderLite
 from src.hellaswag_eval import render_example, iterate_examples, get_most_likely_row
 
-torch.set_float32_matmul_precision('high')    # enable TF32 precision
+# TF32 is an Ampere-specific optimization, Turing T4 doesn't support it natively.
+# torch.set_float32_matmul_precision('high')    # enable TF32 precision
 
 # set torch compile to True (if it doesn't throws any error) to speed up training
 use_torch_compile = False
@@ -62,6 +63,9 @@ class Trainer:
         max_lr, 
         min_lr
     ):
+        # T4 relies on FP16 which is more prone to underflow/overflow than BF16, so we use a GradScaler
+        scaler = torch.amp.GradScaler(device='cuda' if self.device_type == 'cuda' else 'cpu')
+        
         for step in range(max_steps):
             t0 = time.time()
             self.is_last_step = (step == max_steps - 1)
@@ -88,8 +92,8 @@ class Trainer:
                 inp, tar = inp.to(self.device), tar.to(self.device)
                 
                 # FORWARD PASS !!!
-                # autocast to bfloat16 for faster compute and memory efficiency
-                with torch.autocast(device_type=self.device_type, dtype=torch.bfloat16):
+                # autocast to float16 (T4 optimized) for faster compute and memory efficiency
+                with torch.autocast(device_type=self.device_type, dtype=torch.float16):
                     logits, loss = self.model(inp, tar)
 
                 # loss is scaled to account for gradient accumulation, because the gradients just add
@@ -106,7 +110,8 @@ class Trainer:
                 # each process accumulates gradients separately when 'require_backward_grad_sync'=False
                 # in the final 'mini_step', 'require_backward_grad_sync' becomes True, therefore 
                 # gradients are averaged across all processes and shared among them by loss.backward()
-                loss.backward()
+                # Scale the loss and call backward to create scaled gradients
+                scaler.scale(loss).backward()
 
             if self.ddp:
                 # 'batch_loss' is outside of DDP container, so need to perform 'all_reduce' to 
@@ -114,7 +119,10 @@ class Trainer:
                 # 'all_reduce' averages and deposits the result on all the processes
                 dist.all_reduce(batch_loss, op=dist.ReduceOp.AVG)
 
-            # once gradients are computed, clip the global l2-norm of the gradient at 1.0
+            # Unscales the gradients of optimizer's assigned params in-place
+            scaler.unscale_(self.optimizer)
+
+            # once gradients are computed and unscaled, clip the global l2-norm of the gradient at 1.0
             norm = nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)    # monitor/print 'norm'
 
             # determine learning rate with decay
@@ -123,7 +131,11 @@ class Trainer:
             for param_group in self.optimizer.param_groups:
                 param_group['lr'] = lr
             
-            self.optimizer.step()
+            # optimizer's gradients are already unscaled, so scaler.step does not unscale them,
+            # it just calls optimizer.step() if no inf/NaN gradients are found
+            scaler.step(self.optimizer)
+            # Updates the scale for next iteration.
+            scaler.update()
             if self.device_type == 'cuda':
                 torch.cuda.synchronize()    # wait for the GPU to finish work
             
@@ -147,7 +159,7 @@ class Trainer:
             for _ in range(val_steps):
                 inp, tar = self.val_loader.next_batch()
                 inp, tar = inp.to(self.device), tar.to(self.device)
-                with torch.autocast(device_type=self.device_type, dtype=torch.bfloat16):
+                with torch.autocast(device_type=self.device_type, dtype=torch.float16):
                     logits, loss = self.model(inp, tar)
                 loss /= val_steps
                 val_loss_accum += loss.detach()
@@ -187,7 +199,7 @@ class Trainer:
             _, tokens, mask, label = render_example(example)    # (4,N), (4,N), (4,N)
             tokens, mask = tokens.to(self.device), mask.to(self.device)
             with torch.no_grad():
-                with torch.autocast(device_type=self.device_type, dtype=torch.bfloat16):
+                with torch.autocast(device_type=self.device_type, dtype=torch.float16):
                     logits, loss = self.model(tokens)
                 pred_norm = get_most_likely_row(tokens, mask, logits)
             n_total += 1
@@ -220,7 +232,7 @@ class Trainer:
         # generate new tokens one token at a time until the sequence length becomes 'max_tokens'
         while gen_tokens.shape[-1] <= max_tokens:
             with torch.no_grad():
-                with torch.autocast(device_type=self.device_type, dtype=torch.bfloat16):
+                with torch.autocast(device_type=self.device_type, dtype=torch.float16):
                     logits, loss = self.model(gen_tokens)    # (num_seq, n, vocab_size)
                 logits = logits[:, -1, :]    # (num_seq, vocab_size)
                 probs = F.softmax(logits, dim=-1)    # (num_seq, vocab_size)

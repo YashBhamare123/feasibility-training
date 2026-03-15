@@ -7,11 +7,11 @@ import inspect
 
 @dataclass
 class GPTConfig:
-    context_length: int = 1024    # max context / sequence length
+    context_length: int = 256    # max context / sequence length
     vocab_size: int = 50257    # number of tokens: 50000 BPE merges + 256 bytes tokens + 1 <endoftext> token
-    num_layers: int = 12
-    embd_size: int = 768    # embedding dim
-    num_heads: int = 12
+    num_layers: int = 5
+    embd_size: int = 512    # embedding dim
+    num_heads: int = 6
 
 
 class CausalSelfAttention(nn.Module):
