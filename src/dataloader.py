@@ -8,7 +8,7 @@ script_dir = os.path.dirname(__file__)
 class DataLoaderLite:
     """ A simple dataloader for FineWebEdu-10B dataset """
 
-    def __init__(self, B, T, process_rank, num_processes, split='train'):
+    def __init__(self, B, T, process_rank, num_processes, split='train', data_root=None):
         super().__init__()
         self.B, self.T = B, T
         self.process_rank = process_rank
@@ -16,7 +16,8 @@ class DataLoaderLite:
         assert split in {'train', 'val'}
         
         # get the shard filenames
-        data_root = os.path.join(script_dir, "../data/edu_fineweb10B")
+        if data_root is None:
+            data_root = os.path.join(script_dir, "../data/edu_fineweb10B")
         shard_filenames = os.listdir(data_root)
         shard_filenames = sorted([filename for filename in shard_filenames if split in filename])
         self.shard_filepaths = [os.path.join(data_root, filename) for filename in shard_filenames]
